@@ -1,0 +1,9 @@
+Package: com.yuyi.voicepack
+Name: YuyiVoicePack
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: QQ 双指长按呼出本地 silk 语音包面板，一键发送给当前聊天对象
+Maintainer: yuyi
+Author: yuyi
+Section: Tweaks
+Depends: mobilesubstrate
