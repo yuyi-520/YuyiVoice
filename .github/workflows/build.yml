@@ -1,0 +1,56 @@
+name: Build Tweak
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build .deb
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ldid
+        run: brew install ldid
+
+      - name: Setup Theos
+        run: |
+          export THEOS=$HOME/theos
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
+
+          # 用 Theos 官方 SDK
+          git clone --depth 1 https://github.com/theos/sdks.git /tmp/sdks
+          mkdir -p "$THEOS/sdks"
+          cp -r /tmp/sdks/iPhoneOS16.5.sdk "$THEOS/sdks/"
+
+          echo "THEOS=$THEOS" >> $GITHUB_ENV
+          echo "$THEOS/bin" >> $GITHUB_PATH
+
+      - name: Build package
+        run: |
+          make clean || true
+          make package FINALPACKAGE=1 DEBUG=0
+          ls -la packages/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YuyiVoice-deb
+          path: packages/*.deb
+          retention-days: 90
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/*.deb
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
