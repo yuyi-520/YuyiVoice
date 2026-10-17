@@ -1,0 +1,23 @@
+# 编译产物
+packages/
+.theos/
+obj/
+*.deb
+*.dylib
+*.o
+*.a
+
+# Theos 中间文件
+*.log
+.DS_Store
+
+# 用户本地配置
+Makefile.local
+*.xcuserstate
+xcuserdata/
+
+# 编辑器的临时文件
+*.swp
+*~
+.idea/
+.vscode/
