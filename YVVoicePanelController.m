@@ -91,6 +91,26 @@ static NSString * const kYVCellID = @"YVVoiceCell";
 
 @implementation YVVoicePanelController
 
+// 找一个能安全 present 的 VC：
+// 快捷键条子 VC 是聊天 VC 的子 VC，直接在它上面 present 会被系统忽略/样式错乱。
+static UIViewController *YVPresentationHost(UIViewController *vc) {
+    if (!vc) return nil;
+
+    // 已 present 了别的东西，往上走
+    UIViewController *cur = vc;
+    while (cur.presentedViewController) cur = cur.presentedViewController;
+
+    // 优先用聊天 VC（parent 链上最顶的那个非导航容器）
+    UIViewController *top = cur;
+    while (top.parentViewController) top = top.parentViewController;
+
+    // 有导航控制器就用导航控制器
+    if (top.navigationController && top.navigationController.topViewController == top) {
+        return top.navigationController;
+    }
+    return top;
+}
+
 + (void)presentFromViewController:(UIViewController *)vc {
     if (!vc) return;
 
@@ -108,7 +128,17 @@ static NSString * const kYVCellID = @"YVVoiceCell";
         }
     }
 
-    [vc presentViewController:panel animated:YES completion:nil];
+    UIViewController *host = YVPresentationHost(vc);
+    if (!host) {
+        NSLog(@"[YuyiVoice] ⚠️ no presentation host");
+        return;
+    }
+
+    NSLog(@"[YuyiVoice] presenting from %@", NSStringFromClass([host class]));
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [host presentViewController:panel animated:YES completion:nil];
+    });
 }
 
 - (void)viewDidLoad {
