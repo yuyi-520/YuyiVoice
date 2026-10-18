@@ -18,6 +18,9 @@
 
 @interface YVVoiceSender : NSObject
 
+/// 从任意 VC 出发（含快捷键条子 VC）尽力找到聊天 VC
++ (UIViewController *)chatViewControllerFrom:(UIViewController *)vc;
+
 /// 从聊天 VC 里尽力提取会话目标（多策略兜底）
 + (YVChatTarget *)targetFromViewController:(UIViewController *)vc;
 
