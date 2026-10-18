@@ -18,12 +18,128 @@
 
 @implementation YVVoiceSender
 
+#pragma mark - 向上查找聊天 VC
+
+// 判断某个类名是否像「聊天 VC」
+static BOOL YVIsChatViewControllerClass(NSString *name) {
+    if (name.length == 0) return NO;
+    // 明确排除：快捷键条子 VC 本身
+    if ([name containsString:@"ShortcutBarItem"]) return NO;
+    if ([name containsString:@"ShortBarItem"]) return NO;
+    if ([name containsString:@"InputBar"]) return NO;
+    // 聊天 VC 特征
+    if ([name containsString:@"NTAIOChatBaseViewController"]) return YES;
+    if ([name containsString:@"AIOBaseChatViewController"]) return YES;
+    return NO;
+}
+
+// 从任意对象/VC 中尝试取出 chatContext
+static id YVExtractChatContext(id obj) {
+    if (!obj) return nil;
+    for (NSString *k in @[@"chatContext", @"chatInfo", @"context"]) {
+        @try {
+            id v = [obj valueForKey:k];
+            if (v) return v;
+        } @catch (__unused NSException *e) {}
+    }
+    return nil;
+}
+
++ (UIViewController *)chatViewControllerFrom:(UIViewController *)vc {
+    if (!vc) return nil;
+
+    // 1) 自身就是聊天 VC
+    if (YVIsChatViewControllerClass(NSStringFromClass([vc class]))) return vc;
+
+    // 2) parentViewController 链向上
+    UIViewController *cur = vc;
+    while (cur) {
+        if (YVIsChatViewControllerClass(NSStringFromClass([cur class]))) return cur;
+        cur = cur.parentViewController;
+    }
+
+    // 3) 从 parentViewController 链上找任意持有 chatContext 的 VC
+    cur = vc;
+    while (cur) {
+        if (YVExtractChatContext(cur)) {
+            NSLog(@"[YuyiVoice] found VC with chatContext: %@", NSStringFromClass([cur class]));
+            return cur;
+        }
+        cur = cur.parentViewController;
+    }
+
+    // 4) 从 present/navigation 链找
+    cur = vc;
+    while (cur) {
+        if (cur.presentingViewController) {
+            cur = cur.presentingViewController;
+            if (YVIsChatViewControllerClass(NSStringFromClass([cur class]))) return cur;
+            if (YVExtractChatContext(cur)) return cur;
+            continue;
+        }
+        if (cur.navigationController && cur.navigationController != cur) {
+            UIViewController *nav = cur.navigationController;
+            if (YVIsChatViewControllerClass(NSStringFromClass([nav class]))) return nav;
+            if (YVExtractChatContext(nav)) return nav;
+        }
+        break;
+    }
+
+    // 5) 兜底：遍历 keyWindow 的 VC 树
+    UIWindow *keyWindow = nil;
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+            if (w.isKeyWindow) { keyWindow = w; break; }
+        }
+        if (keyWindow) break;
+    }
+
+    UIViewController *root = keyWindow.rootViewController;
+    NSMutableArray<UIViewController *> *stack = [NSMutableArray array];
+    if (root) [stack addObject:root];
+
+    while (stack.count > 0) {
+        UIViewController *v = stack.firstObject;
+        [stack removeObjectAtIndex:0];
+
+        if (YVIsChatViewControllerClass(NSStringFromClass([v class]))) {
+            NSLog(@"[YuyiVoice] found chat VC via window tree: %@", NSStringFromClass([v class]));
+            return v;
+        }
+        if (YVExtractChatContext(v)) {
+            NSLog(@"[YuyiVoice] found VC with chatContext via window tree: %@", NSStringFromClass([v class]));
+            return v;
+        }
+
+        for (UIViewController *child in v.childViewControllers) [stack addObject:child];
+        if (v.presentedViewController) [stack addObject:v.presentedViewController];
+        if (v.navigationController) [stack addObject:v.navigationController];
+    }
+
+    NSLog(@"[YuyiVoice] ⚠️ no chat VC found from %@", NSStringFromClass([vc class]));
+    return nil;
+}
+
 #pragma mark - 提取会话目标
 
 + (YVChatTarget *)targetFromViewController:(UIViewController *)vc {
     YVChatTarget *t = [YVChatTarget new];
-    t.sourceVC = vc;
     if (!vc) return t;
+
+    // 关键：调用方可能是快捷键条子 VC（NTAIOShortcutBarItemAudioViewController），
+    // 它本身没有 chatContext，必须先向上找到真正的聊天 VC。
+    UIViewController *chatVC = [self chatViewControllerFrom:vc];
+    if (!chatVC) {
+        NSLog(@"[YuyiVoice] ⚠️ targetFromViewController: 未找到聊天 VC（传入 %@）",
+              NSStringFromClass([vc class]));
+        t.sourceVC = vc;
+        return t;
+    }
+    t.sourceVC = chatVC;
+    vc = chatVC;   // 后续所有提取逻辑都针对聊天 VC
+
+    NSLog(@"[YuyiVoice] resolved chat VC: %@", NSStringFromClass([vc class]));
 
     // ── 策略 1：chatContext（AIOChatParameter.AIOChatContext）
     //    绝大多数字段是 Swift 计算属性，用 KVC / 方法调用双路兜底
