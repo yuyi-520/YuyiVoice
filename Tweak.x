@@ -1,6 +1,13 @@
 //
-//  Tweak.xm
-//  双指长按手势 → 呼出语音包面板
+//  Tweak.x
+//  在「语音快捷键条」上长按 → 振动 + 弹出语音包面板
+//
+//  目标类：NTAIOChat.NTAIOShortcutBarItemAudioViewController
+//  运行时名：_TtC9NTAIOChat40NTAIOShortcutBarItemAudioViewController
+//  继承链：NTAIOShortcutBarItemAudioViewController
+//            -> NTAIOShortBarItemBaseViewController
+//            -> AIOLib.AIOShortBarItemBaseViewController
+//            -> UIViewController
 //
 
 #import <UIKit/UIKit.h>
@@ -10,49 +17,40 @@
 #import "YVVoiceSender.h"
 #import "YVSilkUtil.h"
 
-#pragma mark - 双指长按手势
-
-@interface YVTwoFingerLongPressGesture : UILongPressGestureRecognizer
-@end
-
-@implementation YVTwoFingerLongPressGesture
-@end
-
 #pragma mark - 关联 key
 
-static const void *kYVGestureKey = &kYVGestureKey;
+static const void *kYVLongPressKey = &kYVLongPressKey;
 
-#pragma mark - 手势处理（category 提前声明）
+#pragma mark - 手势回调声明
 
 @interface UIViewController (YuyiVoice)
-- (void)yv_handleTwoFingerLongPress:(UILongPressGestureRecognizer *)g;
+- (void)yv_handleAudioItemLongPress:(UILongPressGestureRecognizer *)g;
 @end
 
-#pragma mark - 手势安装
+#pragma mark - 安装长按手势
 
-static void YVInstallGesture(UIViewController *vc) {
-    if (!vc) return;
-    if (objc_getAssociatedObject(vc, kYVGestureKey)) return;   // 已安装
+static void YVInstallLongPress(UIViewController *vc) {
+    if (!vc || !vc.isViewLoaded) return;
+    if (objc_getAssociatedObject(vc, kYVLongPressKey)) return;   // 已装过
 
-    YVTwoFingerLongPressGesture *g =
-        [[YVTwoFingerLongPressGesture alloc] initWithTarget:vc
-                                                     action:@selector(yv_handleTwoFingerLongPress:)];
-    g.numberOfTouchesRequired = 2;
+    UILongPressGestureRecognizer *g =
+        [[UILongPressGestureRecognizer alloc] initWithTarget:vc
+                                                      action:@selector(yv_handleAudioItemLongPress:)];
     g.minimumPressDuration = 0.45;
-    g.allowableMovement = 60;
+    g.numberOfTouchesRequired = 1;
+    g.allowableMovement = 30;
     g.cancelsTouchesInView = NO;
-    g.delaysTouchesBegan = NO;
-    g.delaysTouchesEnded = NO;
 
     [vc.view addGestureRecognizer:g];
-    objc_setAssociatedObject(vc, kYVGestureKey, g, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(vc, kYVLongPressKey, g, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
-    NSLog(@"[YuyiVoice] gesture installed on %@", NSStringFromClass([vc class]));
+    NSLog(@"[YuyiVoice] long-press installed on %@ (view=%@)",
+          NSStringFromClass([vc class]), NSStringFromClass([vc.view class]));
 }
 
-#pragma mark - 按名字模糊查找类
+#pragma mark - 按关键字查找类
 
-static Class YVFindClassContaining(NSString *keyword, NSString *excludeKeyword) {
+static Class YVFindClassContaining(NSString *keyword, NSString *mustNotContain) {
     int count = objc_getClassList(NULL, 0);
     if (count <= 0) return Nil;
 
@@ -64,7 +62,7 @@ static Class YVFindClassContaining(NSString *keyword, NSString *excludeKeyword) 
     for (int i = 0; i < count; i++) {
         NSString *name = NSStringFromClass(classes[i]);
         if (![name containsString:keyword]) continue;
-        if (excludeKeyword && [name containsString:excludeKeyword]) continue;
+        if (mustNotContain && [name containsString:mustNotContain]) continue;
         found = classes[i];
         NSLog(@"[YuyiVoice] matched class: %@", name);
         break;
@@ -80,11 +78,10 @@ static YVViewDidLoadIMP orig_viewDidLoad = NULL;
 
 static void YV_viewDidLoad(id self, SEL _cmd) {
     if (orig_viewDidLoad) orig_viewDidLoad(self, _cmd);
-
     @try {
-        YVInstallGesture((UIViewController *)self);
+        YVInstallLongPress((UIViewController *)self);
     } @catch (NSException *e) {
-        NSLog(@"[YuyiVoice] install gesture failed: %@", e);
+        NSLog(@"[YuyiVoice] install failed: %@", e);
     }
 }
 
@@ -92,44 +89,57 @@ static void YV_viewDidLoad(id self, SEL _cmd) {
 
 %ctor {
     @autoreleasepool {
-        // 主聊天 VC：NTBaseAIO.NTAIOChatBaseViewController
-        Class chatVC = YVFindClassContaining(@"NTAIOChatBaseViewController", nil);
+        // 主目标：语音快捷键条 VC
+        Class audioVC = YVFindClassContaining(@"NTAIOShortcutBarItemAudioViewController", nil);
 
-        if (!chatVC) {
-            // 兜底：找基类
-            chatVC = YVFindClassContaining(@"AIOBaseChatViewController", nil);
-        }
-
-        if (!chatVC) {
-            NSLog(@"[YuyiVoice] ⚠️ 未找到聊天 VC 类，手势不会安装。请检查 QQ 版本或类名。");
+        if (!audioVC) {
+            NSLog(@"[YuyiVoice] ⚠️ 未找到 NTAIOShortcutBarItemAudioViewController");
             return;
         }
 
-        MSHookMessageEx(chatVC,
+        MSHookMessageEx(audioVC,
                         @selector(viewDidLoad),
                         (IMP)YV_viewDidLoad,
                         (IMP *)&orig_viewDidLoad);
 
-        NSLog(@"[YuyiVoice] ✅ hooked -[%@ viewDidLoad]", NSStringFromClass(chatVC));
+        NSLog(@"[YuyiVoice] ✅ hooked -[%@ viewDidLoad]", NSStringFromClass(audioVC));
+
+        // 子类可能重写 viewDidLoad 而不调 super，需单独挂
+        //   RobotAIOChat.NTRobotAIOShortcutBarItemAudioViewController
+        //   BaseTempAIO.NTTempAIOShortcutBarItemAudioViewController
+        NSArray *subclassKeys = @[@"NTRobotAIOShortcutBarItemAudioViewController",
+                                  @"NTTempAIOShortcutBarItemAudioViewController"];
+        for (NSString *key in subclassKeys) {
+            Class sub = YVFindClassContaining(key, nil);
+            if (!sub) continue;
+            MSHookMessageEx(sub,
+                            @selector(viewDidLoad),
+                            (IMP)YV_viewDidLoad,
+                            (IMP *)&orig_viewDidLoad);
+            NSLog(@"[YuyiVoice] ✅ hooked -[%@ viewDidLoad] (subclass)", NSStringFromClass(sub));
+        }
     }
 }
 
-#pragma mark - 手势处理实现
+#pragma mark - 长按处理
 
 @implementation UIViewController (YuyiVoice)
 
-- (void)yv_handleTwoFingerLongPress:(UILongPressGestureRecognizer *)g {
+- (void)yv_handleAudioItemLongPress:(UILongPressGestureRecognizer *)g {
     if (g.state != UIGestureRecognizerStateBegan) return;
 
-    NSLog(@"[YuyiVoice] two-finger long press on %@", NSStringFromClass([self class]));
+    NSLog(@"[YuyiVoice] long press on %@", NSStringFromClass([self class]));
 
+    // 振动反馈
     UIImpactFeedbackGenerator *fb =
         [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+    [fb prepare];
     [fb impactOccurred];
 
-    // 防止重复弹出
+    // 防重复
     if ([self.presentedViewController isKindOfClass:[YVVoicePanelController class]]) return;
 
+    // 从当前 VC 向上找聊天 VC，取会话信息
     [YVVoicePanelController presentFromViewController:self];
 }
 
